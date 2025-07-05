@@ -1,0 +1,92 @@
+#!/bin/bash
+
+echo "🧠 Deploying Brian4.0: Ghost Protocol on port 8010..."
+
+# 1. Create secure directories
+mkdir -p ~/brian4.0/{core,agents,crypto,quantum,logs,missions}
+cd ~/brian4.0
+
+# 2. Install dependencies
+sudo apt update && sudo apt install -y python3 python3-pip curl git ffmpeg jq xdg-utils build-essential
+
+# 3. Install Python packages
+pip3 install fastapi uvicorn requests web3 cryptography
+
+# 4. Quantum Core
+cat <<EOF > quantum/quantum_core.py
+def optimize_strategy(data):
+    return "Quantum-optimized plan for: " + data
+EOF
+
+# 5. Wallet Monitor
+cat <<EOF > crypto/wallet_monitor.py
+from web3 import Web3
+
+wallets = [
+    "0x3f8d463512f100b62e5d1f543be170acaeac8114",
+    "0xA708F155827C3e542871AE9f273fC7B92e16BBa9"
+]
+usdt = "0x55d398326f99059fF775485246999027B3197955"
+w3 = Web3(Web3.HTTPProvider("https://bsc-dataseed.binance.org/"))
+
+def check_balances():
+    abi = [{"constant":True,"inputs":[{"name":"_owner","type":"address"}],"name":"balanceOf","outputs":[{"name":"balance","type":"uint256"}],"type":"function"}]
+    contract = w3.eth.contract(address=w3.toChecksumAddress(usdt), abi=abi)
+    for wallet in wallets:
+        balance = contract.functions.balanceOf(wallet).call()
+        print(f"{wallet} → {w3.fromWei(balance, 'ether')} USDT")
+EOF
+
+# 6. Self-Healing Daemon
+cat <<EOF > core/self_heal.py
+import os, time
+while True:
+    if os.system("pgrep -f 'uvicorn main:app --host 0.0.0.0 --port 8010' > /dev/null") != 0:
+        os.system("bash ~/brian4.0/run.sh &")
+    time.sleep(15)
+EOF
+
+# 7. Main Backend (Port 8010)
+cat <<EOF > core/main.py
+from fastapi import FastAPI, Request
+import subprocess, json
+from quantum.quantum_core import optimize_strategy
+
+app = FastAPI()
+
+@app.post("/code")
+async def code(data: Request):
+    body = await data.json()
+    prompt = body.get("prompt")
+    result = subprocess.run(["ollama", "run", "codellama"], input=prompt.encode(), stdout=subprocess.PIPE)
+    return {"response": result.stdout.decode()}
+
+@app.post("/quantum")
+async def quantum(data: Request):
+    body = await data.json()
+    return {"strategy": optimize_strategy(body.get("goal"))}
+EOF
+
+# 8. Run Script (Port 8010)
+cat <<EOF > run.sh
+#!/bin/bash
+cd ~/brian4.0/core
+uvicorn main:app --host 0.0.0.0 --port 8010
+EOF
+chmod +x run.sh
+
+# 9. Desktop Launcher
+cat <<EOF > ~/Desktop/Launch_Brian4.desktop
+[Desktop Entry]
+Name=Launch Brian4.0
+Exec=bash -c '~/brian4.0/run.sh'
+Icon=utilities-terminal
+Terminal=true
+Type=Application
+EOF
+chmod +x ~/Desktop/Launch_Brian4.desktop
+
+# 10. Launch Self-Healing in Background
+nohup python3 core/self_heal.py > logs/heal.log 2>&1 &
+
+echo "✅ Brian4.0 deployed successfully on http://localhost:8010"
