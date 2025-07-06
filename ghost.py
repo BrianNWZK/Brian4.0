@@ -78,4 +78,65 @@ chatboard_html = """
     #response { margin-top: 20px; white-space: pre-wrap; }
   </style>
 </head>
-<body
+<body>
+  <h1>💬 Brian4.0 Chatboard</h1>
+  <input id="prompt" placeholder="Ask Brian anything..." />
+  <button onclick="send()">Send</button>
+  <div id="response"></div>
+  <script>
+    async function send() {
+      const prompt = document.getElementById("prompt").value;
+      const res = await fetch("/code", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt })
+      });
+      const data = await res.json();
+      document.getElementById("response").innerText = data.response;
+    }
+  </script>
+</body>
+</html>
+"""
+
+# === Dashboard Template ===
+dashboard_template = Template("""
+<html>
+<head><title>Brian4.0 Dashboard</title></head>
+<body style="font-family:Arial;background:#111;color:#0f0;padding:20px;">
+    <h1>🧠 Brian4.0: Ghost Protocol</h1>
+    <h2>Wallet Balances</h2>
+    <pre>{{ balances }}</pre>
+    <h2>Status Logs</h2>
+    <pre>{{ logs }}</pre>
+</body>
+</html>
+""")
+
+# === Routes ===
+@app.get("/", response_class=HTMLResponse)
+async def chat_ui():
+    return HTMLResponse(content=chatboard_html)
+
+@app.get("/dashboard", response_class=HTMLResponse)
+async def dashboard():
+    try:
+        with open("revenue.log", "r") as f:
+            logs = f.read().splitlines()[-20:]
+    except FileNotFoundError:
+        logs = ["No logs found."]
+    balances = check_balances()
+    return dashboard_template.render(logs="\n".join(logs), balances="\n".join(balances))
+
+@app.post("/code")
+async def code(data: Request):
+    body = await data.json()
+    prompt = body.get("prompt", "")
+    result = subprocess.run(["ollama", "run", "codellama"], input=prompt.encode(), stdout=subprocess.PIPE)
+    return {"response": result.stdout.decode()}
+
+@app.post("/quantum")
+async def quantum(data: Request):
+    body = await data.json()
+    goal = body.get("goal", "")
+    return {"strategy": optimize_strategy(goal)}
