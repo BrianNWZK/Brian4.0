@@ -1,27 +1,12 @@
-#!/bin/bash
-
-echo "🧠 Deploying Brian4.0: Ghost Protocol on port 8010..."
-
-# 1. Create secure directories
-mkdir -p ~/brian4.0/{core,agents,crypto,quantum,logs,missions}
-cd ~/brian4.0
-
-# 2. Install dependencies
-sudo apt update && sudo apt install -y python3 python3-pip curl git ffmpeg jq xdg-utils build-essential
-
-# 3. Install Python packages
-pip3 install fastapi uvicorn requests web3 cryptography
-
-# 4. Quantum Core
-cat <<EOF > quantum/quantum_core.py
-def optimize_strategy(data):
-    return "Quantum-optimized plan for: " + data
-EOF
-
-# 5. Wallet Monitor
-cat <<EOF > crypto/wallet_monitor.py
+from fastapi import FastAPI, Request
+from fastapi.responses import HTMLResponse
+from jinja2 import Template
 from web3 import Web3
+import subprocess, os, time, threading
 
+app = FastAPI()
+
+# === Wallet Monitor ===
 wallets = [
     "0x3f8d463512f100b62e5d1f543be170acaeac8114",
     "0xA708F155827C3e542871AE9f273fC7B92e16BBa9"
@@ -30,63 +15,106 @@ usdt = "0x55d398326f99059fF775485246999027B3197955"
 w3 = Web3(Web3.HTTPProvider("https://bsc-dataseed.binance.org/"))
 
 def check_balances():
-    abi = [{"constant":True,"inputs":[{"name":"_owner","type":"address"}],"name":"balanceOf","outputs":[{"name":"balance","type":"uint256"}],"type":"function"}]
-    contract = w3.eth.contract(address=w3.toChecksumAddress(usdt), abi=abi)
-    for wallet in wallets:
-        balance = contract.functions.balanceOf(wallet).call()
-        print(f"{wallet} → {w3.fromWei(balance, 'ether')} USDT")
-EOF
+    try:
+        abi = [{"constant":True,"inputs":[{"name":"_owner","type":"address"}],
+                "name":"balanceOf","outputs":[{"name":"balance","type":"uint256"}],
+                "type":"function"}]
+        contract = w3.eth.contract(address=w3.toChecksumAddress(usdt), abi=abi)
+        balances = []
+        for wallet in wallets:
+            balance = contract.functions.balanceOf(wallet).call()
+            balances.append(f"{wallet} → {w3.fromWei(balance, 'ether')} USDT")
+        return balances
+    except Exception as e:
+        return [f"Error: {e}"]
 
-# 6. Self-Healing Daemon
-cat <<EOF > core/self_heal.py
-import os, time
-while True:
-    if os.system("pgrep -f 'uvicorn main:app --host 0.0.0.0 --port 8010' > /dev/null") != 0:
-        os.system("bash ~/brian4.0/run.sh &")
-    time.sleep(15)
-EOF
+# === Quantum Strategy ===
+def optimize_strategy(data):
+    return "Quantum-optimized plan for: " + data
 
-# 7. Main Backend (Port 8010)
-cat <<EOF > core/main.py
-from fastapi import FastAPI, Request
-import subprocess, json
-from quantum.quantum_core import optimize_strategy
+# === Chatboard UI ===
+chatboard_html = """
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Brian4.0 Chatboard</title>
+  <style>
+    body { background: #0d0d0d; color: #00ffcc; font-family: monospace; padding: 20px; }
+    input, button { font-size: 16px; padding: 10px; margin-top: 10px; width: 100%; }
+    #response { margin-top: 20px; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <h1>💬 Brian4.0 Chatboard</h1>
+  <input id="prompt" placeholder="Ask Brian anything..." />
+  <button onclick="send()">Send</button>
+  <div id="response"></div>
+  <script>
+    async function send() {
+      const prompt = document.getElementById("prompt").value;
+      const res = await fetch("/code", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt })
+      });
+      const data = await res.json();
+      document.getElementById("response").innerText = data.response;
+    }
+  </script>
+</body>
+</html>
+"""
 
-app = FastAPI()
+# === Dashboard Template ===
+dashboard_template = Template("""
+<html>
+<head><title>Brian4.0 Dashboard</title></head>
+<body style="font-family:Arial;background:#111;color:#0f0;padding:20px;">
+    <h1>🧠 Brian4.0: Ghost Protocol</h1>
+    <h2>Wallet Balances</h2>
+    <pre>{{ balances }}</pre>
+    <h2>Status Logs</h2>
+    <pre>{{ logs }}</pre>
+</body>
+</html>
+""")
+
+# === Routes ===
+@app.get("/", response_class=HTMLResponse)
+async def chat_ui():
+    return HTMLResponse(content=chatboard_html)
+
+@app.get("/dashboard", response_class=HTMLResponse)
+async def dashboard():
+    try:
+        with open("heal.log", "r") as f:
+            logs = f.read().splitlines()[-20:]
+    except FileNotFoundError:
+        logs = ["No logs found."]
+    balances = check_balances()
+    return dashboard_template.render(logs="\n".join(logs), balances="\n".join(balances))
 
 @app.post("/code")
 async def code(data: Request):
     body = await data.json()
-    prompt = body.get("prompt")
+    prompt = body.get("prompt", "")
     result = subprocess.run(["ollama", "run", "codellama"], input=prompt.encode(), stdout=subprocess.PIPE)
     return {"response": result.stdout.decode()}
 
 @app.post("/quantum")
 async def quantum(data: Request):
     body = await data.json()
-    return {"strategy": optimize_strategy(body.get("goal"))}
-EOF
+    goal = body.get("goal", "")
+    return {"strategy": optimize_strategy(goal)}
 
-# 8. Run Script (Port 8010)
-cat <<EOF > run.sh
-#!/bin/bash
-cd ~/brian4.0/core
-uvicorn main:app --host 0.0.0.0 --port 8010
-EOF
-chmod +x run.sh
+# === Optional: Self-Healing Thread ===
+def self_heal():
+    while True:
+        time.sleep(15)
+        if os.system("pgrep -f 'uvicorn ghost:app' > /dev/null") != 0:
+            with open("heal.log", "a") as log:
+                log.write("🔁 Restarting Brian4.0...\n")
+            os.system("python3 ghost.py &")
 
-# 9. Desktop Launcher
-cat <<EOF > ~/Desktop/Launch_Brian4.desktop
-[Desktop Entry]
-Name=Launch Brian4.0
-Exec=bash -c '~/brian4.0/run.sh'
-Icon=utilities-terminal
-Terminal=true
-Type=Application
-EOF
-chmod +x ~/Desktop/Launch_Brian4.desktop
-
-# 10. Launch Self-Healing in Background
-nohup python3 core/self_heal.py > logs/heal.log 2>&1 &
-
-echo "✅ Brian4.0 deployed successfully on http://localhost:8010"
+# Uncomment to enable self-healing
+# threading.Thread(target=self_heal, daemon=True).start()
